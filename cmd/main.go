@@ -43,14 +43,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	pool, err := db.InitDB(context.Background(), cfg.DatabaseURL)
+	pool, err := db.InitDB(context.Background(), cfg.DatabaseURL, log)
 
 	if err != nil {
 		log.Error("database connection failed", "error", err)
 		os.Exit(1)
 	}
 
-	redisClient, err := redisclient.Init(context.Background(), cfg.RedisAddr)
+	redisClient, err := redisclient.Init(context.Background(), cfg.RedisAddr, log)
 
 	if err != nil {
 		log.Error("redis connection failed", "error", err)
@@ -92,7 +92,7 @@ func main() {
 
 		if err != nil {
 			log.Error("parse uuid failed", "error", err)
-			http.Error(w, fmt.Sprintf("parse uuid failed: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("parse uuid failed: %v", err), http.StatusBadRequest)
 			return
 		}
 
@@ -112,12 +112,16 @@ func main() {
 			b, err := json.Marshal(task)
 			if err != nil {
 				log.Error("json marshal failed", "error", err)
+				http.Error(w, fmt.Sprintf("json marshal failed: %v", err), http.StatusInternalServerError)
+				return
 			}
 
 			err = redisClient.Set(r.Context(), fmt.Sprintf("task:%s", id), string(b), time.Minute*5).Err()
 
 			if err != nil {
 				log.Error("redis store task failed", "task_id", uuid, "error", err)
+				http.Error(w, fmt.Sprintf("redis store task failed: %v", err), http.StatusInternalServerError)
+				return
 			}
 
 			log.Info("fetch task by pgdb", "task_id", id)
