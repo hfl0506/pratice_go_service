@@ -1,0 +1,7 @@
+server
+.git
+.env
+
+tmp
+*.log
+
