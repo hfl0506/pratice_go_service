@@ -9,16 +9,19 @@ import (
 	sqlcq "aws-prj/pgsql"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	_log "log"
-	"net/http"
-	"os"
-	"strconv"
-	"time"
 )
 
 func toPgUUID(s string) (pgtype.UUID, error) {
@@ -240,6 +243,46 @@ func main() {
 		util.WriteJSON(w, http.StatusOK, task)
 	})
 
-	log.Info("server listen to port 8080")
-	_log.Fatalf("server error: %v", http.ListenAndServe(":8080", app))
+	srv := &http.Server{
+		Addr:    cfg.Port,
+		Handler: app,
+	}
+
+	serverErr := make(chan error, 1)
+
+	go func() {
+		log.Info("server starting", "addr", srv.Addr)
+
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-serverErr:
+		log.Error("server failed", "error", err)
+		os.Exit(1)
+	case <-stop:
+		log.Info("shutdown signal received")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error("server shutdown failed", "error", err)
+		os.Exit(1)
+	}
+
+	pool.Close()
+
+	if err := redisClient.Close(); err != nil {
+		log.Error("redis close failed", "error", err)
+	}
+
+	log.Info("server stopped")
 }
