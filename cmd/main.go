@@ -79,7 +79,7 @@ func main() {
 			return
 		}
 
-		if err := redisClient.Ping(r.Context()); err != nil {
+		if err := redisClient.Ping(r.Context()).Err(); err != nil {
 			log.Error("redis is not ready", "error", err)
 			http.Error(w, "redis is not ready", http.StatusInternalServerError)
 			return
