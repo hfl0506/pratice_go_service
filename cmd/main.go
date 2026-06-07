@@ -3,21 +3,22 @@ package main
 import (
 	"aws-prj/internal/config"
 	"aws-prj/internal/db"
+	"aws-prj/internal/logger"
 	redisclient "aws-prj/internal/redis_client"
 	"aws-prj/internal/util"
 	sqlcq "aws-prj/pgsql"
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"net/http"
-	"strconv"
-	"time"
-
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	_log "log"
+	"net/http"
+	"os"
+	"strconv"
+	"time"
 )
 
 func toPgUUID(s string) (pgtype.UUID, error) {
@@ -35,20 +36,25 @@ func toPgUUID(s string) (pgtype.UUID, error) {
 func main() {
 	cfg, err := config.Load()
 
+	log := logger.Init()
+
 	if err != nil {
-		log.Fatalf("load config error: %v", err)
+		log.Error("load config", "error", err)
+		os.Exit(1)
 	}
 
 	pool, err := db.InitDB(context.Background(), cfg.DatabaseURL)
 
 	if err != nil {
-		log.Fatalf("database connection failed: %v", err)
+		log.Error("database connection failed", "error", err)
+		os.Exit(1)
 	}
 
 	redisClient, err := redisclient.Init(context.Background(), cfg.RedisAddr)
 
 	if err != nil {
-		log.Fatalf("redis connection failed: %v", err)
+		log.Error("redis connection failed", "error", err)
+		os.Exit(1)
 	}
 
 	queries := sqlcq.New(pool)
@@ -65,13 +71,13 @@ func main() {
 
 	app.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {
-			log.Println("db is not ready")
+			log.Error("db is not ready", "error", err)
 			http.Error(w, "db is not ready", http.StatusInternalServerError)
 			return
 		}
 
 		if err := redisClient.Ping(r.Context()); err != nil {
-			log.Println("redis is not ready")
+			log.Error("redis is not ready", "error", err)
 			http.Error(w, "redis is not ready", http.StatusInternalServerError)
 			return
 		}
@@ -85,6 +91,7 @@ func main() {
 		uuid, err := toPgUUID(id)
 
 		if err != nil {
+			log.Error("parse uuid failed", "error", err)
 			http.Error(w, fmt.Sprintf("parse uuid failed: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -97,22 +104,23 @@ func main() {
 			task, err := queries.GetTaskById(r.Context(), uuid)
 
 			if err != nil {
+				log.Error("get task by id failed by db", "error", err)
 				http.Error(w, fmt.Sprintf("(db) get task by id failed: %v", err), http.StatusInternalServerError)
 				return
 			}
 
 			b, err := json.Marshal(task)
 			if err != nil {
-				log.Printf("json marshal failed: %v", err)
+				log.Error("json marshal failed", "error", err)
 			}
 
 			err = redisClient.Set(r.Context(), fmt.Sprintf("task:%s", id), string(b), time.Minute*5).Err()
 
 			if err != nil {
-				log.Printf("redis store task %s failed: %v", uuid, err)
+				log.Error("redis store task failed", "task_id", uuid, "error", err)
 			}
 
-			log.Printf("fetch task %s by pgdb", id)
+			log.Info("fetch task by pgdb", "task_id", id)
 
 			util.WriteJSON(w, http.StatusOK, task)
 			return
@@ -121,11 +129,12 @@ func main() {
 		err = json.Unmarshal([]byte(val), &redisTask)
 
 		if err != nil {
+			log.Error("json unmarshal failed", "error", err)
 			http.Error(w, fmt.Sprintf("json unmarshal failed: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		log.Printf("fetch task %s by redis", id)
+		log.Info("fetch task by redis", "task_id", id)
 
 		util.WriteJSON(w, http.StatusOK, redisTask)
 	})
@@ -136,6 +145,7 @@ func main() {
 		uuid, err := toPgUUID(id)
 
 		if err != nil {
+			log.Error("parse uuid failed", "uuid", uuid)
 			http.Error(w, fmt.Sprintf("parse uuid failed: %v", uuid), http.StatusInternalServerError)
 			return
 		}
@@ -143,6 +153,7 @@ func main() {
 		err = queries.DeleteTaskById(r.Context(), uuid)
 
 		if err != nil {
+			log.Error("delete task by id", "id", id, "error", err)
 			http.Error(w, fmt.Sprintf("delete task by id %s: %v", id, err), http.StatusInternalServerError)
 			return
 		}
@@ -163,6 +174,7 @@ func main() {
 		page, err := strconv.Atoi(pageStr)
 
 		if err != nil {
+			log.Error("page str parse failed", "error", err)
 			http.Error(w, "page str parse failed", http.StatusBadRequest)
 			return
 		}
@@ -170,6 +182,7 @@ func main() {
 		limit, err := strconv.Atoi(limitStr)
 
 		if err != nil {
+			log.Error("limit str parse failed", "error", err)
 			http.Error(w, "limit str parse failed", http.StatusBadRequest)
 			return
 		}
@@ -182,6 +195,7 @@ func main() {
 		})
 
 		if err != nil {
+			log.Info("list tasks response empty", "error", err)
 			util.WriteJSON(w, http.StatusOK, listTasksResp{
 				List:   []sqlcq.Task{},
 				Offset: offset,
@@ -206,6 +220,7 @@ func main() {
 		var body createTaskReq
 
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			log.Error("create task request body error", "error", err)
 			http.Error(w, fmt.Sprintf("create task request body error: %v", err), http.StatusBadRequest)
 			return
 		}
@@ -213,6 +228,7 @@ func main() {
 		task, err := queries.CreateTask(r.Context(), body.Context)
 
 		if err != nil {
+			log.Error("create task error", "error", err)
 			http.Error(w, fmt.Sprintf("create task error: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -220,6 +236,6 @@ func main() {
 		util.WriteJSON(w, http.StatusOK, task)
 	})
 
-	log.Println("server listen to port 8080")
-	log.Fatalf("server error: %v", http.ListenAndServe(":8080", app))
+	log.Info("server listen to port 8080")
+	_log.Fatalf("server error: %v", http.ListenAndServe(":8080", app))
 }
