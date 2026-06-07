@@ -63,6 +63,22 @@ func main() {
 		util.WriteJSON(w, http.StatusOK, "ok")
 	})
 
+	app.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := pool.Ping(r.Context()); err != nil {
+			log.Println("db is not ready")
+			http.Error(w, "db is not ready", http.StatusInternalServerError)
+			return
+		}
+
+		if err := redisClient.Ping(r.Context()); err != nil {
+			log.Println("redis is not ready")
+			http.Error(w, "redis is not ready", http.StatusInternalServerError)
+			return
+		}
+
+		util.WriteJSON(w, http.StatusOK, "db and redis ready")
+	})
+
 	app.Get("/api/tasks/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "id")
 
