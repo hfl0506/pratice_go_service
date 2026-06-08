@@ -18,5 +18,5 @@ jobs:
 
           ssh -o StrictHostKeyChecking=no \
             -i ~/.ssh/vps_key \
-            ${{ secrets.VPS_USER }}@{{ secrets.VPS_HOST }} \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             'cd ~/pratice_go_service && git pull origin main && bash scripts/deploy-vps.sh'
